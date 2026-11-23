@@ -47,31 +47,25 @@ class NotificationService {
     private final List<NotificationSender> senders;
     private final List<FailedNotification> failures =
             new ArrayList<>();
+    private final RetryExecutor retryExecutor = new RetryExecutor(3);
 
     NotificationService(List<NotificationSender> senders) {
         this.senders = List.copyOf(senders);
+        
     }
 
     public void notifyUser(String recipient, String message) {
         for (NotificationSender sender : senders) {
-          for (int attempt = 1; attempt <= 3; attempt++) {
-              try {
-                  sender.send(recipient, message); 
-                  break;
-              } catch (Exception e) {
-                  System.err.println("Attempt " + attempt + " failed: " + e.getMessage());
-                  if (attempt==3){
-                    System.err.println(
-                    "Failed: " + sender.getClass().getSimpleName()
-                    + " - " + e.getMessage()
-                    );
-                    failures.add(new FailedNotification(
-                        recipient,
-                        message,
-                        sender.getClass().getSimpleName()
-                    ));
-                  }
-              }
+          try{
+            retryExecutor.execute(() -> {
+                sender.send(recipient, message);
+            });
+          }catch (RuntimeException e){
+            System.err.println("Notification permanently failed: "
+                + e.getMessage());
+            failures.add(new FailedNotification(recipient, message, 
+            sender.getClass().getSimpleName()
+            ));
           }
       }
     }
@@ -79,6 +73,36 @@ class NotificationService {
         return List.copyOf(failures);
     }
 }
+class RetryExecutor {
+    private final int maxAttempts;
+
+    RetryExecutor(int maxAttempts) {
+        if (maxAttempts < 1) {
+          throw new IllegalArgumentException(
+            "maxAttempts must be >= 1"
+          );
+        }
+        this.maxAttempts = maxAttempts;
+    }
+
+    public void execute(Runnable operation) {
+        // TODO: Retry operation up to maxAttempts times
+        // Stop immediately on success
+        // Throw the final exception if all attempts fail
+      for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+            try {
+                operation.run();
+                return;
+            } catch (RuntimeException e) {
+                System.err.println("Attempt " + attempt + " failed: " + e.getMessage());
+                if (attempt==maxAttempts){
+                  throw e;
+                }
+            }
+        }
+    }
+}
+
 
 class Main {
     public static void main(String[] args) {
